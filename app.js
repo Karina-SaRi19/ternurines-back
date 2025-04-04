@@ -345,6 +345,12 @@ app.post('/reset-password', async (req, res) => {
     }
 });
 
+// Añadir una ruta GET para manejar los clics en el enlace del correo
+app.get('/reset-password', (req, res) => {
+  const { token, email } = req.query;
+  // Redirigir al frontend con los parámetros
+  res.redirect(`https://ternurines-front.onrender.com/reset-password?token=${token}&email=${email}`);
+});
 
 app.get("/user", async (req, res) => {
     const authHeader = req.headers.authorization;
