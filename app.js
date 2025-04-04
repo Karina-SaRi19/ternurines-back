@@ -350,8 +350,13 @@ app.post('/reset-password', async (req, res) => {
 app.get('/reset-password', (req, res) => {
   const { token, email } = req.query;
   
+  console.log('Reset password request received:');
+  console.log('Token:', token);
+  console.log('Email:', email);
+  
   // Verificar que los parámetros necesarios estén presentes
   if (!token || !email) {
+    console.log('Missing parameters, returning error page');
     return res.status(400).send(`
       <html>
         <head>
@@ -374,9 +379,14 @@ app.get('/reset-password', (req, res) => {
     `);
   }
   
+  const redirectUrl = `https://ternurines-front.onrender.com/reset-password?token=${token}&email=${email}`;
+  console.log('Redirecting to:', redirectUrl);
+  
   // Redirigir al frontend con los parámetros
-  res.redirect(`https://ternurines-front.onrender.com/reset-password?token=${token}&email=${email}`);
+  res.redirect(redirectUrl);
 });
+
+
 
 
 app.get("/user", async (req, res) => {
