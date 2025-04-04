@@ -280,7 +280,7 @@ app.post('/forgot-password', async (req, res) => {
         await db.collection('users').doc(userId).update({ resetToken, resetExpires });
 
         // Enlace para restablecer contraseña
-        const resetLink = `https://ternurines-back.onrender.com/reset-password?token=${resetToken}&email=${email}`;
+        const resetLink = `https://ternurines-front.onrender.com/reset-password?token=${resetToken}&email=${email}`;
 
         // Enviar correo con el enlace
         const mailOptions = {
