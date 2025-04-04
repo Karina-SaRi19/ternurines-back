@@ -56,7 +56,7 @@ app.post('/register', async (req, res) => {
 
         // Definir rol automáticamente (admin, master, usuario normal)
         let rol = 2; // Usuario normal
-        const adminEmails = ["admin@example.com", "otroadmin@empresa.com"];
+        const adminEmails = ["2022371122@uteq.edu.mx", "otroadmin@empresa.com"];
         const masterEmails = ["master@example.com", "otromaster@empresa.com"];
         if (adminEmails.includes(email)) {
             rol = 1; // Asignar rol de administrador si el correo está en la lista
@@ -118,79 +118,79 @@ app.post('/register', async (req, res) => {
 });
 
 // Generar Token JWT con datos del usuario
+// Update the generateToken function to ensure role is included
 const generateToken = (user) => {
-    return jwt.sign(
-        {
-            uid: user.uid,
-            username: user.username,
-            email: user.email,
-            rol: user.rol,
-        },
-        'secretKey',
-        { expiresIn: '10m' }
-    );
+  return jwt.sign(
+      {
+          uid: user.uid,
+          username: user.username,
+          email: user.email,
+          rol: user.rol,  // Make sure role is included in the token
+      },
+      'secretKey',
+      { expiresIn: '1h' }  // Increased token expiration time
+  );
 };
 
-// Login de usuario
+// Update the login endpoint to properly return the role
 app.post('/login', async (req, res) => {
-    const { username, password } = req.body;
-    // console.log(email,password)
-    // console.log(req.body)
-    if (!username || !password) {
-        return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
-    }
+  const { username, password } = req.body;
+  
+  if (!username || !password) {
+      return res.status(400).json({ error: 'Usuario y contraseña son requeridos' });
+  }
 
-    try {
-        const userQuery = await db.collection('users').where('username', '==', username.trim()).get();
+  try {
+      const userQuery = await db.collection('users').where('username', '==', username.trim()).get();
 
-        if (userQuery.empty) {
-            return res.status(400).json({ error: 'Usuario no encontrado' });
-        }
+      if (userQuery.empty) {
+          return res.status(400).json({ error: 'Usuario no encontrado' });
+      }
 
-        const userData = userQuery.docs[0].data();
-        const userId = userQuery.docs[0].id;
+      const userData = userQuery.docs[0].data();
+      const userId = userQuery.docs[0].id;
 
-        // Verificación de la contraseña con bcrypt
-        const validPassword = await bcrypt.compare(password, userData.password);
-        if (!validPassword) {
-            return res.status(400).json({ error: 'Contraseña incorrecta' });
-        }
+      // Verificación de la contraseña con bcrypt
+      const validPassword = await bcrypt.compare(password, userData.password);
+      if (!validPassword) {
+          return res.status(400).json({ error: 'Contraseña incorrecta' });
+      }
 
-        // Generar el token con la información completa del usuario
-        const token = generateToken({
-            uid: userId,
-            username: userData.username,
-            email: userData.email,
-            rol: userData.rol,
-        });
+      // Generar el token con la información completa del usuario
+      const token = generateToken({
+          uid: userId,
+          username: userData.username,
+          email: userData.email,
+          rol: userData.rol,
+      });
 
-        // Imprimir los datos del usuario en la consola 
-        console.log('✅ Usuario ha iniciado sesión:', {
-            uid: userId,
-            username: userData.username,
-            email: userData.email,
-            rol: userData.rol,
-            token: token,
-        });
+      // Imprimir los datos del usuario en la consola 
+      console.log('✅ Usuario ha iniciado sesión:', {
+          uid: userId,
+          username: userData.username,
+          email: userData.email,
+          rol: userData.rol,
+          token: token,
+      });
 
-        res.json({
-            message: 'Login exitoso',
-            token,
-            userId,
-            user: {
-                uid: userId,
-                username: userData.username,
-                email: userData.email,
-                rol: userData.rol,
-                password: userData.password,
-            }
-        });
+      res.json({
+          message: 'Login exitoso',
+          token,
+          userId,
+          user: {
+              uid: userId,
+              username: userData.username,
+              email: userData.email,
+              rol: userData.rol,
+              password: userData.password,
+          }
+      });
 
-    } catch (error) {
-        console.error('Error en el login:', error);
-        res.status(500).json({ error: error.message });
-    }
-}); 
+  } catch (error) {
+      console.error('Error en el login:', error);
+      res.status(500).json({ error: error.message });
+  }
+});
 
 // Middleware para verificar token JWT
 const verifyToken = (req, res, next) => {
