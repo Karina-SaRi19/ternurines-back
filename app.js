@@ -6,7 +6,6 @@ const cors = require('cors');
 const { addDays, addHours, addMinutes, addWeeks } = require("date-fns");
 const nodemailer = require("nodemailer");
 const crypto = require("crypto");
-const cors = require('cors');
 
 const ternuServiceKey = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
@@ -28,11 +27,7 @@ const app = express();
 
 // Middleware
 app.use(express.json());
-app.use(cors({
-  origin: ['https://ternurines-front.onrender.com', 'http://localhost:3000'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors());
 
 // Registro de usuario
 app.post('/register', async (req, res) => {
