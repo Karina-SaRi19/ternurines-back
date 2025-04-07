@@ -280,7 +280,7 @@ app.post('/forgot-password', async (req, res) => {
         await db.collection('users').doc(userId).update({ resetToken, resetExpires });
 
         // Enlace para restablecer contraseña
-        const resetLink = `https://ternurines-front.onrender.com/reset-password?token=${resetToken}&email=${email}`;
+        const resetLink = `http://localhost:3001/reset-password?token=${resetToken}&email=${email}`;
 
         // Enviar correo con el enlace
         const mailOptions = {
@@ -344,49 +344,6 @@ app.post('/reset-password', async (req, res) => {
         res.status(500).json({ error: 'Error en el servidor' });
     }
 });
-
-// Añadir una ruta GET para manejar los clics en el enlace del correo
-// Añadir una ruta GET para manejar los clics en el enlace del correo
-app.get('/reset-password', (req, res) => {
-  const { token, email } = req.query;
-  
-  console.log('Reset password request received:');
-  console.log('Token:', token);
-  console.log('Email:', email);
-  
-  // Verificar que los parámetros necesarios estén presentes
-  if (!token || !email) {
-    console.log('Missing parameters, returning error page');
-    return res.status(400).send(`
-      <html>
-        <head>
-          <title>Error - Enlace Inválido</title>
-          <style>
-            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
-            .error { color: #e74c3c; }
-            .container { max-width: 600px; margin: 0 auto; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1 class="error">Enlace Inválido</h1>
-            <p>El enlace para restablecer la contraseña es inválido o ha expirado.</p>
-            <p>Por favor, solicita un nuevo enlace de restablecimiento de contraseña.</p>
-            <a href="https://ternurines-front.onrender.com/forgot-password">Volver a Olvidé mi Contraseña</a>
-          </div>
-        </body>
-      </html>
-    `);
-  }
-  
-  const redirectUrl = `https://ternurines-front.onrender.com/reset-password?token=${token}&email=${email}`;
-  console.log('Redirecting to:', redirectUrl);
-  
-  // Redirigir al frontend con los parámetros
-  res.redirect(redirectUrl);
-});
-
-
 
 
 app.get("/user", async (req, res) => {
