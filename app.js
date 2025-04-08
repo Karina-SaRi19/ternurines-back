@@ -37,19 +37,22 @@ app.use(cors({
 }));
 
 // SSE endpoint for real-time activity updates
-app.get('/events', verifyToken, (req, res) => {
-  const userId = req.user.uid;
+app.get('/events', (req, res) => {
+  const userId = req.query.userId;
   
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
   // Set headers for SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('Access-Control-Allow-Origin', '*');
   
   // Send initial connection message
   res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
   
-  // Store client connection
+  // Store the client connection
   if (!sseClients.has(userId)) {
     sseClients.set(userId, []);
   }
@@ -57,12 +60,10 @@ app.get('/events', verifyToken, (req, res) => {
   
   // Handle client disconnect
   req.on('close', () => {
-    if (sseClients.has(userId)) {
-      const clients = sseClients.get(userId);
-      const index = clients.indexOf(res);
-      if (index !== -1) {
-        clients.splice(index, 1);
-      }
+    const clients = sseClients.get(userId) || [];
+    const index = clients.indexOf(res);
+    if (index !== -1) {
+      clients.splice(index, 1);
       if (clients.length === 0) {
         sseClients.delete(userId);
       }
@@ -81,14 +82,12 @@ const sendActivityToUser = (userId, activity) => {
 };
 
 // Log user activity
-// Log user activity
-const logUserActivity = async (userId, activityType, message, details = {}) => {
+const logUserActivity = async (userId, activityType, details = {}) => {
   try {
     // Store activity in Firestore
     const activityRef = await db.collection('userActivities').add({
       userId,
       type: activityType,
-      message,
       details,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -97,7 +96,6 @@ const logUserActivity = async (userId, activityType, message, details = {}) => {
     const activity = {
       id: activityRef.id,
       type: activityType,
-      message,
       ...details,
       timestamp: new Date().toISOString()
     };
