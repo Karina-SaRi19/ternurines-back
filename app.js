@@ -993,47 +993,59 @@ app.post('/verify-mfa', async (req, res) => {
 
 
 // Update the SSE endpoint to properly handle the token and avoid header errors
-app.get('/order-updates', async (req, res) => {
+// SSE endpoint for real-time updates
+app.get('/order-updates', (req, res) => {
+  const userId = req.query.userId;
+  const token = req.query.token;
+  
+  if (!userId || !token) {
+    return res.status(400).json({ error: 'User ID and token are required' });
+  }
+
   try {
-    // Get token from query parameter
-    const token = req.query.token;
+    // Verify the token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    if (!token) {
-      return res.status(401).json({ error: 'No token provided' });
+    if (decoded.uid !== userId) {
+      return res.status(403).json({ error: 'Invalid token for this user' });
     }
     
-    // Verify the token
-    const decoded = jwt.verify(token, 'secretKey');
-    const userId = decoded.uid;
-    
     // Set headers for SSE
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
-    });
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
     
     // Send initial connection message
-    res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to order updates' })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
     
     // Store the client connection
-    sseClients.set(userId, res);
+    if (!sseClients.has(userId)) {
+      sseClients.set(userId, []);
+    }
+    sseClients.get(userId).push(res);
+    
     console.log(`SSE connection established for user ${userId}`);
     
     // Handle client disconnect
     req.on('close', () => {
-      sseClients.delete(userId);
+      const clients = sseClients.get(userId) || [];
+      const index = clients.indexOf(res);
+      if (index !== -1) {
+        clients.splice(index, 1);
+        if (clients.length === 0) {
+          sseClients.delete(userId);
+        }
+      }
       console.log(`SSE connection closed for user ${userId}`);
     });
   } catch (error) {
-    console.error('SSE connection error:', error);
-    // Only send error response if headers haven't been sent yet
-    if (!res.headersSent) {
-      res.status(401).json({ error: 'Invalid token' });
-    }
+    console.error('Error in SSE connection:', error);
+    return res.status(403).json({ error: 'Invalid token' });
   }
 });
+
+
 
 // Update the sendOrderUpdate function to use the sseClients Map
 const sendOrderUpdate = (userId, data) => {
