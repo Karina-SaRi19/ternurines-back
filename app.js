@@ -37,38 +37,56 @@ app.use(cors({
 }));
 
 // SSE endpoint for real-time activity updates
+// SSE endpoint for real-time activity updates
 app.get('/events', (req, res) => {
   const userId = req.query.userId;
+  const token = req.query.token;
   
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
+  if (!userId || !token) {
+    return res.status(400).json({ error: 'User ID and token are required' });
   }
 
-  // Set headers for SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  
-  // Send initial connection message
-  res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
-  
-  // Store the client connection
-  if (!sseClients.has(userId)) {
-    sseClients.set(userId, []);
-  }
-  sseClients.get(userId).push(res);
-  
-  // Handle client disconnect
-  req.on('close', () => {
-    const clients = sseClients.get(userId) || [];
-    const index = clients.indexOf(res);
-    if (index !== -1) {
-      clients.splice(index, 1);
-      if (clients.length === 0) {
-        sseClients.delete(userId);
-      }
+  try {
+    // Verify the token
+    const decoded = jwt.verify(token, 'secretKey'); // Use your actual secret key
+    
+    if (decoded.uid !== userId) {
+      return res.status(403).json({ error: 'Invalid token for this user' });
     }
-  });
+    
+    // Set headers for SSE
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Send initial connection message
+    res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
+    
+    // Store the client connection
+    if (!sseClients.has(userId)) {
+      sseClients.set(userId, []);
+    }
+    sseClients.get(userId).push(res);
+    
+    console.log(`SSE connection established for user ${userId}`);
+    
+    // Handle client disconnect
+    req.on('close', () => {
+      const clients = sseClients.get(userId) || [];
+      const index = clients.indexOf(res);
+      if (index !== -1) {
+        clients.splice(index, 1);
+        if (clients.length === 0) {
+          sseClients.delete(userId);
+        }
+      }
+      console.log(`SSE connection closed for user ${userId}`);
+    });
+  } catch (error) {
+    console.error('Error in SSE connection:', error);
+    return res.status(403).json({ error: 'Invalid token' });
+  }
 });
 
 // Function to send activity to a specific user
@@ -1048,15 +1066,19 @@ app.get('/order-updates', (req, res) => {
 
 
 // Update the sendOrderUpdate function to use the sseClients Map
+// Update the sendOrderUpdate function to use the sseClients Map
 const sendOrderUpdate = (userId, data) => {
-  const client = sseClients.get(userId);
-  if (client) {
-    client.write(`data: ${JSON.stringify(data)}\n\n`);
+  const clients = sseClients.get(userId);
+  if (clients && clients.length > 0) {
+    clients.forEach(client => {
+      client.write(`data: ${JSON.stringify(data)}\n\n`);
+    });
     console.log(`Update sent to user ${userId}:`, data);
   } else {
     console.log(`No SSE connection for user ${userId}`);
   }
 };
+
 
 // ... rest of your code ...
 // Add a new endpoint to update order status (for admin use)
