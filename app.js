@@ -25,6 +25,9 @@ const db = admin.firestore();
 const auth = admin.auth();
 const app = express();
 
+// Create a map to store SSE clients
+const sseClients = new Map();
+
 // Middleware
 app.use(express.json());
 app.use(cors({
@@ -32,6 +35,81 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+
+// SSE endpoint for real-time activity updates
+app.get('/events', (req, res) => {
+  const userId = req.query.userId;
+  
+  if (!userId) {
+    return res.status(400).json({ error: 'User ID is required' });
+  }
+
+  // Set headers for SSE
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
+  // Send initial connection message
+  res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
+  
+  // Store the client connection
+  if (!sseClients.has(userId)) {
+    sseClients.set(userId, []);
+  }
+  sseClients.get(userId).push(res);
+  
+  // Handle client disconnect
+  req.on('close', () => {
+    const clients = sseClients.get(userId) || [];
+    const index = clients.indexOf(res);
+    if (index !== -1) {
+      clients.splice(index, 1);
+      if (clients.length === 0) {
+        sseClients.delete(userId);
+      }
+    }
+  });
+});
+
+// Function to send activity to a specific user
+const sendActivityToUser = (userId, activity) => {
+  const clients = sseClients.get(userId) || [];
+  const activityData = JSON.stringify(activity);
+  
+  clients.forEach(client => {
+    client.write(`data: ${activityData}\n\n`);
+  });
+};
+
+// Log user activity
+const logUserActivity = async (userId, activityType, details = {}) => {
+  try {
+    // Store activity in Firestore
+    const activityRef = await db.collection('userActivities').add({
+      userId,
+      type: activityType,
+      details,
+      timestamp: admin.firestore.FieldValue.serverTimestamp()
+    });
+    
+    // Create activity object
+    const activity = {
+      id: activityRef.id,
+      type: activityType,
+      ...details,
+      timestamp: new Date().toISOString()
+    };
+    
+    // Send to connected clients
+    sendActivityToUser(userId, activity);
+    
+    return activity;
+  } catch (error) {
+    console.error('Error logging activity:', error);
+    return null;
+  }
+};
+
 
 // Registro de usuario
 app.post('/register', async (req, res) => {
@@ -137,6 +215,7 @@ const generateToken = (user) => {
 };
 
 // Update the login endpoint to properly return the role
+// Modify login endpoint to log activity
 app.post('/login', async (req, res) => {
   const { username, password } = req.body;
   
@@ -168,7 +247,12 @@ app.post('/login', async (req, res) => {
           rol: userData.rol,
       });
 
-      // Imprimir los datos del usuario en la consola 
+      // Log login activity
+      logUserActivity(userId, 'login', {
+        message: `Usuario ${userData.username} inició sesión`,
+      });
+
+      // Rest of the login code remains the same
       console.log('✅ Usuario ha iniciado sesión:', {
           uid: userId,
           username: userData.username,
@@ -195,6 +279,7 @@ app.post('/login', async (req, res) => {
       res.status(500).json({ error: error.message });
   }
 });
+
 
 // Middleware para verificar token JWT
 const verifyToken = (req, res, next) => {
@@ -473,13 +558,21 @@ app.get('/carrito', verifyToken, async (req, res) => {
           updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
+        // Log activity
+        logUserActivity(userId, 'cart_add', {
+          message: `Producto "${producto.nombre}" añadido al carrito`,
+          productId: producto.id,
+          productName: producto.nombre,
+          productType: producto.tipo
+        });
+        
         return res.json({ 
           message: 'Producto agregado al carrito',
           items: [{ ...producto, cantidad: 1 }]
         });
       }
       
-      // Si el carrito existe, actualizar
+      // Rest of the cart/add code remains the same
       const cartData = cartDoc.data();
       const items = cartData.items || [];
       
@@ -494,6 +587,14 @@ app.get('/carrito', verifyToken, async (req, res) => {
       } else {
         // Si no existe, agregar como nuevo
         items.push({ ...producto, cantidad: 1 });
+        
+        // Log activity only for new items
+        logUserActivity(userId, 'cart_add', {
+          message: `Producto "${producto.nombre}" añadido al carrito`,
+          productId: producto.id,
+          productName: producto.nombre,
+          productType: producto.tipo
+        });
       }
       
       // Actualizar el carrito en Firestore
@@ -511,7 +612,7 @@ app.get('/carrito', verifyToken, async (req, res) => {
       console.error('Error al agregar al carrito:', error);
       res.status(500).json({ error: 'Error al agregar al carrito' });
     }
-  });
+    });
   
   // Actualizar cantidad de un producto en el carrito
   app.put('/carrito/update', verifyToken, async (req, res) => {
@@ -672,6 +773,18 @@ app.get('/carrito', verifyToken, async (req, res) => {
         fechaCreacion: admin.firestore.FieldValue.serverTimestamp()
       });
       
+      // Log purchase activity
+      logUserActivity(userId, 'purchase', {
+        message: 'Compra realizada exitosamente',
+        orderId: orderRef.id,
+        total: total.toFixed(2),
+        items: items.map(item => ({
+          nombre: item.nombre,
+          cantidad: item.cantidad,
+          precio: item.precio
+        }))
+      });
+        
       // Vaciar el carrito después de la compra
       await cartRef.update({
         items: [],
@@ -743,7 +856,7 @@ app.get('/carrito', verifyToken, async (req, res) => {
       res.status(500).json({ error: 'Error al procesar la compra' });
     }
   });
-  
+    
 // MFA endpoints for your backend
 
 // Generate and send MFA code
@@ -842,7 +955,6 @@ app.post('/verify-mfa', async (req, res) => {
   }
 });
 
-const sseClients = new Map();
 
 // Update the SSE endpoint to properly handle the token and avoid header errors
 app.get('/order-updates', async (req, res) => {
@@ -945,164 +1057,55 @@ app.post('/update-order-status', verifyToken, async (req, res) => {
   }
 });
 
-// Modify the checkout endpoint to send an initial update
-app.post('/checkout', verifyToken, async (req, res) => {
+
+app.get('/user-activities', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
-    const { direccion, metodoPago } = req.body;
     
-    if (!direccion || !metodoPago) {
-      return res.status(400).json({ error: 'Datos de envío o pago incompletos' });
-    }
+    // Get activities from Firestore
+    const activitiesSnapshot = await db.collection('userActivities')
+      .where('userId', '==', userId)
+      .orderBy('timestamp', 'desc')
+      .limit(50)
+      .get();
     
-    // Obtener el carrito del usuario
-    const cartRef = admin.firestore().collection('carrito').doc(userId);
-    const cartDoc = await cartRef.get();
-    
-    if (!cartDoc.exists || !cartDoc.data().items || cartDoc.data().items.length === 0) {
-      return res.status(400).json({ error: 'El carrito está vacío' });
-    }
-    
-    const cartData = cartDoc.data();
-    
-    // Calcular el total de la compra
-    const items = cartData.items;
-    const subtotal = items.reduce((total, item) => total + (item.precio * item.cantidad), 0);
-    const impuestos = subtotal * 0.16; // 16% de impuestos
-    const envio = 150; // Costo fijo de envío
-    const total = subtotal + impuestos + envio;
-    
-    // Crear la orden en Firestore
-    const orderRef = await admin.firestore().collection('ordenes').add({
-      userId,
-      items,
-      subtotal,
-      impuestos,
-      envio,
-      total,
-      direccion,
-      metodoPago,
-      estado: 'pendiente',
-      fechaCreacion: admin.firestore.FieldValue.serverTimestamp()
+    const activities = [];
+    activitiesSnapshot.forEach(doc => {
+      const data = doc.data();
+      activities.push({
+        id: doc.id,
+        type: data.type,
+        ...data.details,
+        timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
+      });
     });
     
-    // Vaciar el carrito después de la compra
-    await cartRef.update({
-      items: [],
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    // Obtener datos del usuario para el correo
-    const userDoc = await admin.firestore().collection('users').doc(userId).get();
-    const userData = userDoc.data();
-    
-    // Enviar correo de confirmación
-    const mailOptions = {
-      from: 'infocuchiternuras@gmail.com',
-      to: userData.email,
-      subject: 'Confirmación de Compra - Cuchi Ternuras',
-      html: `
-        <div>
-          <h2>¡Gracias por tu compra!</h2>
-          <p>Hola ${userData.username},</p>
-          <p>Tu pedido ha sido recibido y está siendo procesado. Aquí están los detalles:</p>
-          
-          <div>
-            <h3>Resumen de tu pedido</h3>
-            <p><strong>Número de orden:</strong> ${orderRef.id}</p>
-            <p><strong>Fecha:</strong> ${new Date().toLocaleDateString()}</p>
-            <p><strong>Total:</strong> $${total.toFixed(2)}</p>
-          </div>
-          
-          <h3>Productos:</h3>
-          <ul>
-            ${items.map(item => `
-              <li>
-                <strong>${item.nombre}</strong> x ${item.cantidad} - $${(item.precio * item.cantidad).toFixed(2)}
-              </li>
-            `).join('')}
-          </ul>
-          
-          <div>
-            <p><strong>Subtotal:</strong> $${subtotal.toFixed(2)}</p>
-            <p><strong>Impuestos:</strong> $${impuestos.toFixed(2)}</p>
-            <p><strong>Envío:</strong> $${envio.toFixed(2)}</p>
-            <p><strong>Total:</strong> $${total.toFixed(2)}</p>
-          </div>
-          
-          <div>
-            <p>Tu pedido será enviado a la siguiente dirección:</p>
-            <p>
-              ${direccion.calle} ${direccion.numero}, ${direccion.colonia}<br>
-              ${direccion.ciudad}, ${direccion.estado}, CP ${direccion.cp}
-            </p>
-          </div>
-          
-          <p>Si tienes alguna pregunta sobre tu pedido, no dudes en contactarnos.</p>
-          <p>¡Gracias por elegir Cuchi Ternuras!</p>
-        </div>
-      `
-    };
-    
-    await transporter.sendMail(mailOptions);
-    
-    res.json({ 
-      message: 'Compra realizada con éxito',
-      orderId: orderRef.id,
-      total
-    });
-    
+    res.json({ activities });
   } catch (error) {
-    console.error('Error al procesar la compra:', error);
-    res.status(500).json({ error: 'Error al procesar la compra' });
+    console.error('Error getting user activities:', error);
+    res.status(500).json({ error: 'Error retrieving activity history' });
   }
 });
 
-// Add a new endpoint to update order status (for admin use)
-app.post('/update-order-status', verifyToken, async (req, res) => {
+// Add endpoint to log favorite activity
+app.post('/log-activity', verifyToken, async (req, res) => {
   try {
-    const { orderId, newStatus } = req.body;
-    const adminId = req.user.uid;
+    const userId = req.user.uid;
+    const { type, details } = req.body;
     
-    // Verify the user is an admin
-    const adminDoc = await admin.firestore().collection('users').doc(adminId).get();
-    const adminData = adminDoc.data();
-    
-    if (!adminData || adminData.rol !== 1) {
-      return res.status(403).json({ error: 'No tienes permisos para realizar esta acción' });
+    if (!type) {
+      return res.status(400).json({ error: 'Activity type is required' });
     }
     
-    // Update the order status
-    const orderRef = admin.firestore().collection('ordenes').doc(orderId);
-    const orderDoc = await orderRef.get();
+    const activity = await logUserActivity(userId, type, details);
     
-    if (!orderDoc.exists) {
-      return res.status(404).json({ error: 'Orden no encontrada' });
-    }
-    
-    const orderData = orderDoc.data();
-    
-    // Update the status
-    await orderRef.update({
-      estado: newStatus,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
-    // Send real-time update to the customer
-    sendOrderUpdate(orderData.userId, {
-      type: 'order_updated',
-      orderId,
-      status: newStatus,
-      message: `Tu pedido ha sido actualizado a: ${newStatus}`
-    });
-    
-    res.json({ success: true, message: 'Estado de la orden actualizado' });
-    
+    res.json({ success: true, activity });
   } catch (error) {
-    console.error('Error al actualizar estado de la orden:', error);
-    res.status(500).json({ error: 'Error al actualizar estado de la orden' });
+    console.error('Error logging activity:', error);
+    res.status(500).json({ error: 'Error logging activity' });
   }
 });
+
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
