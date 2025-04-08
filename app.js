@@ -82,30 +82,63 @@ const sendActivityToUser = (userId, activity) => {
 };
 
 // Log user activity
-const logUserActivity = async (userId, activityType, details = {}) => {
+const logUserActivity = async (userId, type, message, details = {}) => {
   try {
-    // Store activity in Firestore
-    const activityRef = await db.collection('userActivities').add({
-      userId,
-      type: activityType,
-      details,
-      timestamp: admin.firestore.FieldValue.serverTimestamp()
-    });
-    
     // Create activity object
     const activity = {
-      id: activityRef.id,
-      type: activityType,
-      ...details,
-      timestamp: new Date().toISOString()
+      id: crypto.randomUUID(),
+      type,
+      message: message || '',
+      timestamp: new Date().toISOString(),
+      ...(typeof details === 'object' ? details : {})
     };
     
-    // Send to connected clients
-    sendActivityToUser(userId, activity);
+    console.log(`Logging activity for user ${userId}: ${type}`);
     
-    return activity;
+    try {
+      // Get user reference
+      const userRef = admin.firestore().collection('users').doc(userId);
+      
+      // Get current user data
+      const userDoc = await userRef.get();
+      
+      if (userDoc.exists) {
+        const userData = userDoc.data();
+        
+        // Update or create activities array
+        let activities = userData.activities || [];
+        if (!Array.isArray(activities)) {
+          activities = [];
+        }
+        
+        // Add new activity at the beginning
+        activities.unshift(activity);
+        
+        // Keep only the last 100 activities
+        if (activities.length > 100) {
+          activities = activities.slice(0, 100);
+        }
+        
+        // Update user document
+        await userRef.update({ activities });
+        
+        // Send activity to connected clients
+        sendOrderUpdate(userId, {
+          type: 'activity',
+          ...activity
+        });
+        
+        return activity;
+      } else {
+        console.log(`User ${userId} not found, cannot log activity`);
+        return null;
+      }
+    } catch (firestoreError) {
+      console.error('Firestore error when logging activity:', firestoreError);
+      return activity; // Still return the activity even if we couldn't save it
+    }
   } catch (error) {
-    console.error('Error logging activity:', error);
+    console.error('Error logging user activity:', error);
     return null;
   }
 };
@@ -1064,41 +1097,50 @@ app.post('/update-order-status', verifyToken, async (req, res) => {
 app.get('/user-activities', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
+    console.log(`Fetching activities for user: ${userId}`);
     
-    // Create a collection for user activities if it doesn't exist yet
-    const activitiesRef = db.collection('userActivities');
+    // Create a default activity if we can't find any
+    const defaultActivities = [
+      {
+        id: crypto.randomUUID(),
+        type: 'system',
+        message: 'Bienvenido al monitoreo de actividad',
+        timestamp: new Date().toISOString()
+      }
+    ];
     
-    // Query activities for this user, ordered by timestamp descending
-    const activitiesSnapshot = await activitiesRef
-      .where('userId', '==', userId)
-      .orderBy('timestamp', 'desc')
-      .limit(50)
-      .get();
-    
-    // If no activities found, return empty array
-    if (activitiesSnapshot.empty) {
-      return res.json({ activities: [] });
+    try {
+      // Try to get the user document
+      const userDoc = await admin.firestore().collection('users').doc(userId).get();
+      
+      if (userDoc.exists) {
+        console.log(`User document found for ${userId}`);
+        // Return the activities array if it exists, otherwise return default
+        const userData = userDoc.data();
+        
+        // If user has activities, use them
+        if (userData.activities && Array.isArray(userData.activities)) {
+          console.log(`Found ${userData.activities.length} activities for user ${userId}`);
+          return res.json({ activities: userData.activities });
+        }
+      }
+      
+      // If we get here, either the user doesn't exist or has no activities
+      console.log(`No activities found for user ${userId}, returning defaults`);
+      return res.json({ activities: defaultActivities });
+      
+    } catch (firestoreError) {
+      console.error('Firestore error:', firestoreError);
+      // Return default activities if there's a Firestore error
+      return res.json({ activities: defaultActivities });
     }
-    
-    // Format activities for response
-    const activities = [];
-    activitiesSnapshot.forEach(doc => {
-      const data = doc.data();
-      activities.push({
-        id: doc.id,
-        type: data.type,
-        message: data.message || '',
-        timestamp: data.timestamp ? data.timestamp.toDate() : new Date(),
-        ...data.details
-      });
-    });
-    
-    res.json({ activities });
   } catch (error) {
-    console.error('Error getting user activities:', error);
-    res.status(500).json({ error: 'Error retrieving activity history' });
+    console.error('General error in /user-activities:', error);
+    // Return an empty array in case of any other error
+    return res.json({ activities: [] });
   }
 });
+
 
 // Add endpoint to log favorite activity
 app.post('/log-activity', verifyToken, async (req, res) => {
@@ -1110,16 +1152,15 @@ app.post('/log-activity', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Activity type is required' });
     }
     
-    // Call the existing logUserActivity function that's defined at the top level
     const activity = await logUserActivity(userId, type, message, details);
     
     if (!activity) {
       return res.status(500).json({ error: 'Failed to log activity' });
     }
     
-    res.json({ success: true, activityId: activity.id });
+    res.json({ success: true, activity });
   } catch (error) {
-    console.error('Error logging activity:', error);
+    console.error('Error in /log-activity endpoint:', error);
     res.status(500).json({ error: 'Error logging activity' });
   }
 });
