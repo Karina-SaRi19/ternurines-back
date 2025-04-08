@@ -81,6 +81,7 @@ const sendActivityToUser = (userId, activity) => {
 };
 
 // Log user activity
+// Log user activity
 const logUserActivity = async (userId, activityType, message, details = {}) => {
   try {
     // Store activity in Firestore
