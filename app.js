@@ -37,22 +37,19 @@ app.use(cors({
 }));
 
 // SSE endpoint for real-time activity updates
-app.get('/events', (req, res) => {
-  const userId = req.query.userId;
+app.get('/events', verifyToken, (req, res) => {
+  const userId = req.user.uid;
   
-  if (!userId) {
-    return res.status(400).json({ error: 'User ID is required' });
-  }
-
   // Set headers for SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('Access-Control-Allow-Origin', '*');
   
   // Send initial connection message
   res.write(`data: ${JSON.stringify({ type: 'connection', message: 'Connected to activity stream' })}\n\n`);
   
-  // Store the client connection
+  // Store client connection
   if (!sseClients.has(userId)) {
     sseClients.set(userId, []);
   }
@@ -60,10 +57,12 @@ app.get('/events', (req, res) => {
   
   // Handle client disconnect
   req.on('close', () => {
-    const clients = sseClients.get(userId) || [];
-    const index = clients.indexOf(res);
-    if (index !== -1) {
-      clients.splice(index, 1);
+    if (sseClients.has(userId)) {
+      const clients = sseClients.get(userId);
+      const index = clients.indexOf(res);
+      if (index !== -1) {
+        clients.splice(index, 1);
+      }
       if (clients.length === 0) {
         sseClients.delete(userId);
       }
@@ -248,9 +247,12 @@ app.post('/login', async (req, res) => {
       });
 
       // Log login activity
-      logUserActivity(userId, 'login', {
-        message: `Usuario ${userData.username} inició sesión`,
-      });
+      await logUserActivity(
+        userId, // The user ID from your login logic
+        'login',
+        `Usuario ${userData.username} inició sesión`
+      );
+
 
       // Rest of the login code remains the same
       console.log('✅ Usuario ha iniciado sesión:', {
@@ -559,12 +561,12 @@ app.get('/carrito', verifyToken, async (req, res) => {
         });
         
         // Log activity
-        logUserActivity(userId, 'cart_add', {
-          message: `Producto "${producto.nombre}" añadido al carrito`,
-          productId: producto.id,
-          productName: producto.nombre,
-          productType: producto.tipo
-        });
+        await logUserActivity(
+          userId,
+          'cart_add',
+          `Producto "${producto.nombre}" añadido al carrito`,
+          { productId: producto.id, productName: producto.nombre }
+        );
         
         return res.json({ 
           message: 'Producto agregado al carrito',
@@ -1062,21 +1064,31 @@ app.get('/user-activities', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
     
-    // Get activities from Firestore
-    const activitiesSnapshot = await db.collection('userActivities')
+    // Create a collection for user activities if it doesn't exist yet
+    const activitiesRef = db.collection('userActivities');
+    
+    // Query activities for this user, ordered by timestamp descending
+    const activitiesSnapshot = await activitiesRef
       .where('userId', '==', userId)
       .orderBy('timestamp', 'desc')
       .limit(50)
       .get();
     
+    // If no activities found, return empty array
+    if (activitiesSnapshot.empty) {
+      return res.json({ activities: [] });
+    }
+    
+    // Format activities for response
     const activities = [];
     activitiesSnapshot.forEach(doc => {
       const data = doc.data();
       activities.push({
         id: doc.id,
         type: data.type,
-        ...data.details,
-        timestamp: data.timestamp ? data.timestamp.toDate() : new Date()
+        message: data.message || '',
+        timestamp: data.timestamp ? data.timestamp.toDate() : new Date(),
+        ...data.details
       });
     });
     
@@ -1091,21 +1103,25 @@ app.get('/user-activities', verifyToken, async (req, res) => {
 app.post('/log-activity', verifyToken, async (req, res) => {
   try {
     const userId = req.user.uid;
-    const { type, details } = req.body;
+    const { type, message, details = {} } = req.body;
     
     if (!type) {
       return res.status(400).json({ error: 'Activity type is required' });
     }
     
-    const activity = await logUserActivity(userId, type, details);
+    // Call the existing logUserActivity function that's defined at the top level
+    const activity = await logUserActivity(userId, type, message, details);
     
-    res.json({ success: true, activity });
+    if (!activity) {
+      return res.status(500).json({ error: 'Failed to log activity' });
+    }
+    
+    res.json({ success: true, activityId: activity.id });
   } catch (error) {
     console.error('Error logging activity:', error);
     res.status(500).json({ error: 'Error logging activity' });
   }
 });
-
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
