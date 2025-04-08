@@ -81,12 +81,13 @@ const sendActivityToUser = (userId, activity) => {
 };
 
 // Log user activity
-const logUserActivity = async (userId, activityType, details = {}) => {
+const logUserActivity = async (userId, activityType, message, details = {}) => {
   try {
     // Store activity in Firestore
     const activityRef = await db.collection('userActivities').add({
       userId,
       type: activityType,
+      message,
       details,
       timestamp: admin.firestore.FieldValue.serverTimestamp()
     });
@@ -95,6 +96,7 @@ const logUserActivity = async (userId, activityType, details = {}) => {
     const activity = {
       id: activityRef.id,
       type: activityType,
+      message,
       ...details,
       timestamp: new Date().toISOString()
     };
